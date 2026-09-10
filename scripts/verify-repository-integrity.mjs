@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Repository integrity scanner v2. Dependency-free. Exit 1 on any finding.
-// Modes: --tracked (git ls-files, default; CI), --worktree (all files on disk), --commits <range> (forged-commit heuristics).
+// Modes: --tracked (git ls-files, default; CI), --worktree (all files on disk), --commits <range|rev> [--max-commits N] (forged-commit heuristics).
 import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, extname, basename } from "node:path";
@@ -105,13 +105,19 @@ for (const path of listFiles()) {
   }
 }
 
+const maxCommits = opt("--max-commits");
 if (commitRange) {
   let log = "";
-  try { log = execFileSync("git", ["log", "--format=%H%x1f%an%x1f%ae%x1f%cn%x1f%ce%x1f%s", commitRange], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }); }
+  const args = ["log", "--format=%H%x1f%an%x1f%ae%x1f%cn%x1f%ce%x1f%ad%x1f%cd%x1f%s", "--date=format:%z"];
+  if (maxCommits) args.push("-n", String(maxCommits));
+  args.push(commitRange);
+  try { log = execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }); }
   catch { flag(commitRange, "could not read the commit range (shallow clone or unknown revision); fetch more history"); }
   for (const line of log.split("\n").filter(Boolean)) {
-    const [sha, an, ae, cn, ce, subject] = line.split("\x1f");
-    if (an !== cn && ae === ce) flag(sha.slice(0, 8), `committer name "${cn}" differs from author name "${an}" with the same email (forged-commit pattern)`);
+    const [sha, an, ae, cn, ce, atz, ctz, subject] = line.split("\x1f");
+    // The forged commits reused the author's identity but were created in another environment: same email, a different
+    // committer name, and a different UTC offset. A rebase on the author's own machine keeps one offset and is not flagged.
+    if (an !== cn && ae === ce && atz !== ctz) flag(sha.slice(0, 8), `committer "${cn}" (${ctz}) differs from author "${an}" (${atz}) with the same email (forged-commit pattern)`);
     // CP437 renderings of UTF-8 emoji and punctuation seen in the forged commits.
     if (/\u2261\u0192|\u256c\u00f4|\u0393[\u00a3\u00f6\u00c7\u00d6]|\u00e2[\u20ac\u0153]|\u00f0\u0178/.test(subject)) flag(sha.slice(0, 8), `commit subject contains CP437 mojibake (Windows console artifact): ${subject.slice(0, 60)}`);
   }
