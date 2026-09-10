@@ -1,0 +1,20 @@
+name: Repository integrity
+on:
+  pull_request:
+  push:
+permissions:
+  contents: read
+jobs:
+  verify-repository-integrity:
+    name: Verify repository integrity
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository with history for commit checks
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 60
+      - name: Reject malicious configuration, assets, editor automation, and forged commits
+        run: |
+          count=$(git rev-list --count HEAD)
+          depth=$(( count > 50 ? 50 : count - 1 ))
+          node scripts/verify-repository-integrity.mjs --tracked --commits "HEAD~${depth}..HEAD"
