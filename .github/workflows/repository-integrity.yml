@@ -12,9 +12,19 @@ jobs:
       - name: Check out repository with history for commit checks
         uses: actions/checkout@v4
         with:
-          fetch-depth: 60
+          fetch-depth: 100
       - name: Reject malicious configuration, assets, editor automation, and forged commits
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          BASE_REF: ${{ github.base_ref }}
         run: |
-          count=$(git rev-list --count HEAD)
-          depth=$(( count > 50 ? 50 : count - 1 ))
-          node scripts/verify-repository-integrity.mjs --tracked --commits "HEAD~${depth}..HEAD"
+          # Scan the whole tracked tree, but only the commits this push or pull request introduces.
+          if [ "$EVENT" = "pull_request" ]; then
+            git fetch --no-tags --depth=100 origin "$BASE_REF" && range="origin/$BASE_REF..HEAD"
+          elif [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] && git cat-file -e "$BEFORE" 2>/dev/null; then
+            range="$BEFORE..HEAD"
+          else
+            range="HEAD --max-commits 1"
+          fi
+          node scripts/verify-repository-integrity.mjs --tracked --commits $range
